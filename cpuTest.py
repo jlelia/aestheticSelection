@@ -1,5 +1,5 @@
 """
-A small testing script to become familiar with StableDiffusion prior to scaling up.
+A small testing script to become familiar with StableDiffusion via CPUs prior to scaling up.
 """
 
 from diffusers import StableDiffusionPipeline
@@ -20,7 +20,7 @@ if torch.cuda.is_available():
 image = pipe(
     "A beautiful painting similar to Wanderer above the Sea of Fog",
     height=512, width=512,
-    num_inference_steps=100,
+    num_inference_steps=50,
     guidance_scale=8
 ).images[0]
 
