@@ -113,7 +113,7 @@ class ImageGenerationPipeline:
         return new_paths
 
 if __name__ == "__main__":
-    prompts = ["A cat playing with a dog", "A serene mountain landscape", "A futuristic city at night"]
+    prompts = ["A beautiful tropical beach", "A serene mountain landscape", "A futuristic city at night"]
     pipeline = ImageGenerationPipeline(vote_threshold=3)
     pipeline.generate_initial_sets(prompts)
     while True:
