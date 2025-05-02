@@ -100,9 +100,9 @@ class ImageGenerationPipeline:
         for j, prompt in enumerate(prompts_variation):
             out = self.img2img_pipe(
                 prompt=prompt,
-                init_image=init_image,
-                strength=0.7,
-                guidance_scale=7.5
+                image=init_image,    
+                strength=.85,
+                guidance_scale=7
             )
             img = out.images[0]
             path = os.path.join(next_set_dir, f"img_{j+1}.png")
@@ -113,7 +113,7 @@ class ImageGenerationPipeline:
         return new_paths
 
 if __name__ == "__main__":
-    prompts = ["A cat playing piano", "A serene mountain landscape", "A futuristic city at night"]
+    prompts = ["A cat playing with a dog", "A serene mountain landscape", "A futuristic city at night"]
     pipeline = ImageGenerationPipeline(vote_threshold=3)
     pipeline.generate_initial_sets(prompts)
     while True:
@@ -121,5 +121,5 @@ if __name__ == "__main__":
         if not selected:
             print("No image reached threshold or quitting.")
             sys.exit()
-        variations = [prompts[(selected-1)//3] + ", detailed, epic lighting" for _ in range(3)]
+        variations = [prompts[(selected-1)//3] for _ in range(3)]
         pipeline.iterate(selected, variations)
