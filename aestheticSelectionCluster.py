@@ -180,7 +180,7 @@ if __name__ == "__main__":
 
         parent_prompt = base_prompts[(sel-1)//3]
         variations = [
-            f"{parent_prompt}, ultra-detailed, cinematic lighting, 8K"
+            f"{parent_prompt}"
             for _ in range(3)
         ]
         pipeline.iterate(sel, variations)
