@@ -20,34 +20,33 @@ class ImageGenerationPipeline:
         model_id: str = "stabilityai/stable-diffusion-xl-base-1.0",
         vote_threshold: int = 3
     ):
-        # We assume at least one CUDA GPU is available, and with two A100s we'll use device_map="auto"
-        assert torch.cuda.is_available(), "CUDA not available—please run on GPU nodes."
         
-        # Load SDXL text-to-image, split across GPUs
+        # Load SDXL text-to-image
         self.sdxl_pipe = StableDiffusionXLPipeline.from_pretrained(
             model_id,
-            torch_dtype=torch.float32,    # full precision
-            device_map="auto"             # auto-shard across all available GPUs
+            torch_dtype=torch.float16,    # half precision for VREM constraits
+            device_map="balanced"         # auto not available on McCleary
         )
-        self.sdxl_pipe.enable_xformers_memory_efficient_attention()
 
-        # Load SDXL image-to-image, likewise sharded
+        # Load SDXL image-to-image
         self.img2img_pipe = StableDiffusionXLImg2ImgPipeline.from_pretrained(
             model_id,
-            torch_dtype=torch.float32,
-            device_map="auto"
+            torch_dtype=torch.float16,
+            device_map="balanced"
         )
-        self.img2img_pipe.enable_xformers_memory_efficient_attention()
 
         self.vote_threshold = vote_threshold
         self.image_sets = []
+
+        # Create an iteration/generation counter
+        self.generation = 0
 
     def generate_initial_sets(
         self,
         prompts: list[str],
         num_variations: int = 3,
         output_dir: str = "outputs",
-        guidance_scale: float = 9.0,
+        guidance_scale: float = 7,
         num_inference_steps: int = 50
     ) -> list[list[str]]:
         os.makedirs(output_dir, exist_ok=True)
@@ -78,8 +77,11 @@ class ImageGenerationPipeline:
     def save_gallery(
         self,
         output_dir: str,
-        gallery_name: str = "gallery.png"
+        gallery_name: str | None = None
     ):
+        if gallery_name is None:
+            gallery_name = f"gallery_gen_{self.generation}.png" # add gen counter to file names
+
         rows = []
         for paths in self.image_sets:
             imgs = [Image.open(p).convert("RGB") for p in paths]
@@ -131,35 +133,37 @@ class ImageGenerationPipeline:
         prompts_variation: list[str],
         num_variations: int = 3,
         output_dir: str = "outputs",
-        strength: float = 0.85,
-        guidance_scale: float = 10.0,
-        num_inference_steps: int = 70
+        strength: float = 1,
+        guidance_scale: float = 7,
+        num_inference_steps: int = 50
     ) -> list[str]:
         set_i = (selected_key - 1) // num_variations
         img_i = (selected_key - 1) % num_variations
         src = self.image_sets[set_i][img_i]
 
         init_img = Image.open(src).convert("RGB")
-        out_dir = os.path.join(output_dir, f"set_{set_i+1}_iter")
-        os.makedirs(out_dir, exist_ok=True)
+
+        self.generation += 1 # increment the generation counter
+        gen_dir = os.path.join(output_dir, f"set_{set_i+1}_gen_{self.generation}")
+        os.makedirs(gen_dir, exist_ok=True)
 
         new_paths = []
         for j, prompt in enumerate(prompts_variation):
             out = self.img2img_pipe(
                 prompt=prompt,
-                init_image=init_img,
+                image=init_img,
                 strength=strength,
                 guidance_scale=guidance_scale,
                 num_inference_steps=num_inference_steps
             )
             img = out.images[0]
             fn = f"img_{j+1}.png"
-            path = os.path.join(out_dir, fn)
+            path = os.path.join(gen_dir, fn)
             img.save(path)
             new_paths.append(path)
 
         self.image_sets[set_i] = new_paths
-        self.save_gallery(output_dir)
+        self.save_gallery(output_dir, f'gen_{self.generation}_gallery')
         return new_paths
 
 
@@ -180,7 +184,7 @@ if __name__ == "__main__":
 
         parent_prompt = base_prompts[(sel-1)//3]
         variations = [
-            f"{parent_prompt}"
+            f"{parent_prompt} with some variation."
             for _ in range(3)
         ]
         pipeline.iterate(sel, variations)
