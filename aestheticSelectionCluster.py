@@ -46,7 +46,7 @@ class ImageGenerationPipeline:
         prompts: list[str],
         num_variations: int = 3,
         output_dir: str = "outputs",
-        guidance_scale: float = 7,
+        guidance_scale: float = 5,
         num_inference_steps: int = 50
     ) -> list[list[str]]:
         os.makedirs(output_dir, exist_ok=True)
@@ -133,8 +133,8 @@ class ImageGenerationPipeline:
         prompts_variation: list[str],
         num_variations: int = 3,
         output_dir: str = "outputs",
-        strength: float = 1,
-        guidance_scale: float = 7,
+        strength: float = 0,
+        guidance_scale: float = 5,
         num_inference_steps: int = 50
     ) -> list[str]:
         set_i = (selected_key - 1) // num_variations
@@ -182,9 +182,9 @@ if __name__ == "__main__":
             print("Goodbye!")
             sys.exit()
 
-        parent_prompt = base_prompts[(sel-1)//3]
+        parent_prompt = base_prompts[(sel-1)//3] # leaving this in case we want to use base_prompts in future
         variations = [
-            f"{parent_prompt} with some variation."
+            ""
             for _ in range(3)
         ]
         pipeline.iterate(sel, variations)
