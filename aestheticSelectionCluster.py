@@ -133,8 +133,8 @@ class ImageGenerationPipeline:
         prompts_variation: list[str],
         num_variations: int = 3,
         output_dir: str = "outputs",
-        strength: float = 0,
-        guidance_scale: float = 5,
+        strength: float = 0.5,
+        guidance_scale: float = 3,
         num_inference_steps: int = 50
     ) -> list[str]:
         set_i = (selected_key - 1) // num_variations
@@ -182,9 +182,9 @@ if __name__ == "__main__":
             print("Goodbye!")
             sys.exit()
 
-        parent_prompt = base_prompts[(sel-1)//3] # leaving this in case we want to use base_prompts in future
+        parent_prompt = base_prompts[(sel-1)//3]
         variations = [
-            ""
+            f"{parent_prompt}."
             for _ in range(3)
         ]
         pipeline.iterate(sel, variations)
