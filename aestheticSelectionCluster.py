@@ -163,7 +163,7 @@ class ImageGenerationPipeline:
             new_paths.append(path)
 
         self.image_sets[set_i] = new_paths
-        self.save_gallery(output_dir, f'gen_{self.generation}_gallery.png')
+        self.save_gallery(output_dir, f'gallery_gen_{self.generation}.png')
         return new_paths
 
 
