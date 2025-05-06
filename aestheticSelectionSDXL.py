@@ -8,7 +8,7 @@ import sys
 from collections import Counter
 
 import torch
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 from diffusers import (
     StableDiffusionXLPipeline,
     StableDiffusionXLImg2ImgPipeline
@@ -85,25 +85,47 @@ class ImageGenerationPipeline:
         output_dir: str,
         gallery_name: str | None = None
     ):
+
         if gallery_name is None:
             gallery_name = f"gallery_gen_{self.generation}.png"  # dynamic naming
 
         rows = []
-        for paths in self.image_sets:
-            imgs = [Image.open(p).convert("RGB") for p in paths]
+        # Annotate images with their vote key numbers
+        for set_idx, paths in enumerate(self.image_sets):
+            imgs = []
+            for img_idx, p in enumerate(paths):
+                im = Image.open(p).convert("RGB")
+                draw = ImageDraw.Draw(im)
+
+                # calculate flat image index (1-based)
+                key_num = set_idx * len(paths) + img_idx + 1
+
+                # Load a bigger font size since the images are large
+                try:
+                    font = ImageFont.truetype("DejaVuSans.ttf", size=32)
+                except IOError:
+                    font = ImageFont.load_default(size=32)  # fallback if font file not found
+
+                # Now use this font in your draw.text call
+                draw.text((5, 5), str(key_num), fill=(255, 255, 255), font=font)
+
+                imgs.append(im)
+
+            # stitch row
             widths, heights = zip(*(im.size for im in imgs))
             total_width = sum(widths)
             max_height = max(heights)
-            row = Image.new("RGB", (total_width, max_height))
+            row_img = Image.new("RGB", (total_width, max_height))
             x = 0
             for im in imgs:
-                row.paste(im, (x, 0))
+                row_img.paste(im, (x, 0))
                 x += im.width
-            rows.append(row)
+            rows.append(row_img)
 
         if not rows:
             return
 
+        # combine rows into full gallery
         w = rows[0].width
         h = sum(r.height for r in rows)
         gallery = Image.new("RGB", (w, h))
@@ -112,9 +134,10 @@ class ImageGenerationPipeline:
             gallery.paste(r, (0, y))
             y += r.height
 
+        # save annotated gallery
         path = os.path.join(output_dir, gallery_name)
         gallery.save(path)
-        print(f"✧ Gallery saved to {path}")
+        print(f"Gallery saved to {path}")
 
     def display_and_vote(self) -> int | None:
         print("Vote: keys 1–9 (q to quit).")
@@ -188,13 +211,13 @@ if __name__ == "__main__":
     # Prompt user for parameters via command line
     vote_threshold = int(input("Enter vote-winning threshold: ").strip())
 
-    print("\nEnter the prompts for the initial image set generation, along with the guidance scale:\n")
+    print("\nEnter the prompts for the initial image set generation, along with the guidance scale...\n")
     prompt1 = input("Enter base prompt 1: ").strip()
     prompt2 = input("Enter base prompt 2: ").strip()
     prompt3 = input("Enter base prompt 3: ").strip()
     init_guidance = float(input("Enter initial guidance scale (usually 5-10): ").strip())
   
-    print("\nEnter the parameters for img2img (iterations on vote-winner):\n")
+    print("\nEnter the parameters for img2img (iterations on vote-winner)...\n")
     use_prompt = input("Include initial prompt in img2img? (y/n): ").strip().lower() == 'y'
     iter_strength = float(input("Enter img2img strength (0 no change, 1 max change): ").strip())
     iter_guidance = float(input("Enter img2img guidance scale (usually 5-10): ").strip())
