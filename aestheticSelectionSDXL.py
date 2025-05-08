@@ -24,7 +24,7 @@ class ImageGenerationPipeline:
     ):
 
         # Load pre-trained SDXL text-to-image (initial image set generation)
-        self.sdxl_pipe = StableDiffusionXLPipeline.from_pretrained(
+        self.txt2img_pipe = StableDiffusionXLPipeline.from_pretrained(
             model_id,
             torch_dtype=torch.float16 # half precision
         )
@@ -53,18 +53,27 @@ class ImageGenerationPipeline:
                 return dispatch_model(module, device_map=device_map)
 
             # Shard SDXL txt2img
-            self.sdxl_pipe.unet           = shard(self.sdxl_pipe.unet)
-            self.sdxl_pipe.vae            = shard(self.sdxl_pipe.vae)
-            self.sdxl_pipe.text_encoder   = shard(self.sdxl_pipe.text_encoder)
-            self.sdxl_pipe.text_encoder_2 = shard(self.sdxl_pipe.text_encoder_2)
+            self.txt2img_pipe.unet           = shard(self.txt2img_pipe.unet)
+            self.txt2img_pipe.vae            = shard(self.txt2img_pipe.vae)
+            self.txt2img_pipe.text_encoder   = shard(self.txt2img_pipe.text_encoder)
+            self.txt2img_pipe.text_encoder_2 = shard(self.txt2img_pipe.text_encoder_2)
 
             # Shard SDXL img2img
             self.img2img_pipe.unet           = shard(self.img2img_pipe.unet)
             self.img2img_pipe.vae            = shard(self.img2img_pipe.vae)
             self.img2img_pipe.text_encoder   = shard(self.img2img_pipe.text_encoder)
             self.img2img_pipe.text_encoder_2 = shard(self.img2img_pipe.text_encoder_2)
+
         else:
             print("Single GPU detected—running without sharding.")
+
+            # Slicing is slower but reduces max VRAM substanitally
+            self.txt2img_pipe.enable_attention_slicing()
+            self.img2img_pipe.enable_attention_slicing()
+
+        # Enable memory-efficient attention for both pipelines
+        self.txt2img_pipe.enable_xformers_memory_efficient_attention()
+        self.img2img_pipe.enable_xformers_memory_efficient_attention()
 
         # Sets the number of votes needed for a winner to command-line input
         self.vote_threshold = vote_threshold
@@ -94,7 +103,7 @@ class ImageGenerationPipeline:
             paths = []
 
             for j in range(num_variations):
-                out = self.sdxl_pipe(
+                out = self.txt2img_pipe(
                     prompt=prompt,
                     guidance_scale=guidance_scale,
                     num_inference_steps=num_inference_steps
