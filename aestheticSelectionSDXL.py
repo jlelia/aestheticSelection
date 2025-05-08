@@ -9,6 +9,7 @@ from collections import Counter
 
 import torch
 from PIL import Image, ImageDraw, ImageFont
+from accelerate import infer_auto_device_map, dispatch_model
 from diffusers import (
     StableDiffusionXLPipeline,
     StableDiffusionXLImg2ImgPipeline
@@ -34,19 +35,36 @@ class ImageGenerationPipeline:
             torch_dtype=torch.float16
         )
 
-        # Check number of GPUs available. If > 1, parallelize
-        if torch.cuda.device_count() > 1:
-            print("Multiple GPUs? Must be nice...")
-            # Parallelize the UNet, VAE, and text encoders for both pipelines
-            self.sdxl_pipe.unet.parallelize(device_map="balanced")
-            self.sdxl_pipe.vae.parallelize(device_map="balanced")
-            self.sdxl_pipe.text_encoder.parallelize(device_map="balanced")
-            self.sdxl_pipe.text_encoder_2.parallelize(device_map="balanced")
-            
-            self.img2img_pipe.unet.parallelize(device_map="balanced")
-            self.img2img_pipe.vae.parallelize(device_map="balanced")
-            self.img2img_pipe.text_encoder.parallelize(device_map="balanced")
-            self.img2img_pipe.text_encoder_2.parallelize(device_map="balanced")
+        # Check number of GPUs available. If > 1, manually shard/parallelize
+        num_gpus = torch.cuda.device_count()
+        if num_gpus > 1:
+            max_mem = {}
+            for i in range(num_gpus):
+                props = torch.cuda.get_device_properties(i)
+                # take 90% of total as a safety margin
+                usable_bytes = int(props.total_memory * 0.9)
+                usable_gb = usable_bytes / (1024**3)
+                max_mem[i] = f"{usable_gb:.2f}GB"
+
+            print(f"Sharding across {num_gpus} GPUs with max_memory={max_mem}")
+
+            def shard(module):
+                device_map = infer_auto_device_map(module, max_memory=max_mem)
+                return dispatch_model(module, device_map=device_map)
+
+            # Shard SDXL txt2img
+            self.sdxl_pipe.unet           = shard(self.sdxl_pipe.unet)
+            self.sdxl_pipe.vae            = shard(self.sdxl_pipe.vae)
+            self.sdxl_pipe.text_encoder   = shard(self.sdxl_pipe.text_encoder)
+            self.sdxl_pipe.text_encoder_2 = shard(self.sdxl_pipe.text_encoder_2)
+
+            # Shard SDXL img2img
+            self.img2img_pipe.unet           = shard(self.img2img_pipe.unet)
+            self.img2img_pipe.vae            = shard(self.img2img_pipe.vae)
+            self.img2img_pipe.text_encoder   = shard(self.img2img_pipe.text_encoder)
+            self.img2img_pipe.text_encoder_2 = shard(self.img2img_pipe.text_encoder_2)
+        else:
+            print("Single GPU detected—running without sharding.")
 
         # Sets the number of votes needed for a winner to command-line input
         self.vote_threshold = vote_threshold
