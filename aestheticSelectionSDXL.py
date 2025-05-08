@@ -25,16 +25,28 @@ class ImageGenerationPipeline:
         # Load pre-trained SDXL text-to-image (initial image set generation)
         self.sdxl_pipe = StableDiffusionXLPipeline.from_pretrained(
             model_id,
-            torch_dtype=torch.float16,    # half precision for VRAM constraints
-            device_map="balanced"
+            torch_dtype=torch.float16 # half precision
         )
 
         # Load pre-trained SDXL img2img (iterate upon the vote winner)
         self.img2img_pipe = StableDiffusionXLImg2ImgPipeline.from_pretrained(
             model_id,
-            torch_dtype=torch.float16,
-            device_map="balanced"
+            torch_dtype=torch.float16
         )
+
+        # Check number of GPUs available. If > 1, parallelize
+        if torch.cuda.device_count() > 1:
+            print("Multiple GPUs? Must be nice...")
+            # Parallelize the UNet, VAE, and text encoders for both pipelines
+            self.sdxl_pipe.unet.parallelize(device_map="balanced")
+            self.sdxl_pipe.vae.parallelize(device_map="balanced")
+            self.sdxl_pipe.text_encoder.parallelize(device_map="balanced")
+            self.sdxl_pipe.text_encoder_2.parallelize(device_map="balanced")
+            
+            self.img2img_pipe.unet.parallelize(device_map="balanced")
+            self.img2img_pipe.vae.parallelize(device_map="balanced")
+            self.img2img_pipe.text_encoder.parallelize(device_map="balanced")
+            self.img2img_pipe.text_encoder_2.parallelize(device_map="balanced")
 
         # Sets the number of votes needed for a winner to command-line input
         self.vote_threshold = vote_threshold
@@ -163,10 +175,10 @@ class ImageGenerationPipeline:
         self,
         selected_key: int,
         prompts_variation: list[str],
-        num_variations: int = 3, # overwritten by user input
+        num_variations: int = 3, 
         output_dir: str = "outputs",
         strength: float = 0.9, # overwritten by user input
-        guidance_scale: float = 0,
+        guidance_scale: float = 0, # overwritten by user input
         num_inference_steps: int = 70 # arbitrary, higher than initial because reduced with strength
     ) -> list[str]:
         set_i = (selected_key - 1) // num_variations
