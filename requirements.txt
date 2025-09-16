@@ -1,0 +1,9 @@
+diffusers>=0.27
+transformers>=4.40
+accelerate>=0.28
+safetensors>=0.4
+Pillow>=10.0
+matplotlib>=3.7
+
+# Note: Install PyTorch separately per https://pytorch.org/ to match your CUDA/OS.
+# Optional: xformers for faster, more memory-efficient attention on CUDA.
