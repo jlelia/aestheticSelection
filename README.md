@@ -26,7 +26,8 @@ Voting notes:
 ## Requirements
 
 - Python 3.10+ (recommended)
-- NVIDIA GPU with CUDA for reasonable performance (built for HPC so VRAM requirements are demanding). CPU mode is supported but painfully slow.
+- NVIDIA GPU with CUDA for reasonable performance. CPU mode is supported but painfully slow.
+  - I built this for a VRAM-rich HPC, so it's quite demanding. Could probably lower max VRAM substantially with some tweaks.
 - Internet access for first run to download SDXL weights from Hugging Face.
 
 Python packages:
