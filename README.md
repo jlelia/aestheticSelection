@@ -9,6 +9,7 @@ Two small scripts work together:
 
 Works on single GPU, multi-GPU (optional sharding via Accelerate), and CPU (very slow).
 
+The gallery viewer is optional for the core loop but recommended for interactive demos.
 
 ## How it works
 
