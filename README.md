@@ -143,4 +143,4 @@ See `LICENSE` for details.
 
 ## Acknowledgments
 
-Built on top of Hugging Face Diffusers and SDXL by Stability AI. Thank you to Sam Friedman for integrating the gallery_viewer.py with HPC. Thank you to the AI at Yale Symposium for accepting this project as an exhibition.
+Built on top of Hugging Face Diffusers and SDXL by Stability AI. Thank you to [Sam Friedman](github.com/samburger) for integrating the gallery_viewer.py with HPC. Thank you to the AI at Yale Symposium for accepting this project as an exhibition.
