@@ -1,6 +1,6 @@
 """
 This script uses Stable Diffusion XL (SDXL) to generate and iteratively mutate images based on votes.
-It is optimized to run on a HPC cluster and accepts command-line parameters for flexibility.
+It can run on single- or multi-GPU systems and accepts command-line parameters for flexibility.
 """
 
 import os
@@ -9,10 +9,9 @@ from collections import Counter
 
 import torch
 from PIL import Image, ImageDraw, ImageFont
-from accelerate import infer_auto_device_map, dispatch_model
 from diffusers import (
     StableDiffusionXLPipeline,
-    StableDiffusionXLImg2ImgPipeline
+    StableDiffusionXLImg2ImgPipeline,
 )
 
 # First, we define a class for the SD pipelines and their parameters
@@ -23,57 +22,76 @@ class ImageGenerationPipeline:
         vote_threshold: int = 3
     ):
 
+        # Establish device and dtype
+        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        dtype = torch.float16 if self.device == "cuda" else torch.float32
+
         # Load pre-trained SDXL text-to-image (initial image set generation)
         self.txt2img_pipe = StableDiffusionXLPipeline.from_pretrained(
             model_id,
-            torch_dtype=torch.float16 # half precision
+            torch_dtype=dtype,
         )
 
         # Load pre-trained SDXL img2img (iterate upon the vote winner)
         self.img2img_pipe = StableDiffusionXLImg2ImgPipeline.from_pretrained(
             model_id,
-            torch_dtype=torch.float16
+            torch_dtype=dtype,
         )
 
-        # Check number of GPUs available. If > 1, manually shard/parallelize
+        # Check number of GPUs available. If > 1, try to shard/parallelize
         num_gpus = torch.cuda.device_count()
-        if num_gpus > 1:
-            max_mem = {}
-            for i in range(num_gpus):
-                props = torch.cuda.get_device_properties(i)
-                # take 90% of total as a safety margin
-                usable_bytes = int(props.total_memory * 0.9)
-                usable_gb = usable_bytes / (1024**3)
-                max_mem[i] = f"{usable_gb:.2f}GB"
+        if self.device == "cuda" and num_gpus > 1:
+            try:
+                from accelerate import infer_auto_device_map, dispatch_model  # type: ignore
 
-            print(f"Sharding across {num_gpus} GPUs with max_memory={max_mem}")
+                max_mem = {}
+                for i in range(num_gpus):
+                    props = torch.cuda.get_device_properties(i)
+                    # take 90% of total as a safety margin
+                    usable_bytes = int(props.total_memory * 0.9)
+                    usable_gb = usable_bytes / (1024**3)
+                    max_mem[i] = f"{usable_gb:.2f}GB"
 
-            def shard(module):
-                device_map = infer_auto_device_map(module, max_memory=max_mem)
-                return dispatch_model(module, device_map=device_map)
+                print(f"Sharding across {num_gpus} GPUs with max_memory={max_mem}")
 
-            # Shard SDXL txt2img
-            self.txt2img_pipe.unet           = shard(self.txt2img_pipe.unet)
-            self.txt2img_pipe.vae            = shard(self.txt2img_pipe.vae)
-            self.txt2img_pipe.text_encoder   = shard(self.txt2img_pipe.text_encoder)
-            self.txt2img_pipe.text_encoder_2 = shard(self.txt2img_pipe.text_encoder_2)
+                def shard(module):
+                    device_map = infer_auto_device_map(module, max_memory=max_mem)
+                    return dispatch_model(module, device_map=device_map)
 
-            # Shard SDXL img2img
-            self.img2img_pipe.unet           = shard(self.img2img_pipe.unet)
-            self.img2img_pipe.vae            = shard(self.img2img_pipe.vae)
-            self.img2img_pipe.text_encoder   = shard(self.img2img_pipe.text_encoder)
-            self.img2img_pipe.text_encoder_2 = shard(self.img2img_pipe.text_encoder_2)
+                # Shard SDXL txt2img
+                self.txt2img_pipe.unet = shard(self.txt2img_pipe.unet)
+                self.txt2img_pipe.vae = shard(self.txt2img_pipe.vae)
+                self.txt2img_pipe.text_encoder = shard(self.txt2img_pipe.text_encoder)
+                self.txt2img_pipe.text_encoder_2 = shard(self.txt2img_pipe.text_encoder_2)
 
+                # Shard SDXL img2img
+                self.img2img_pipe.unet = shard(self.img2img_pipe.unet)
+                self.img2img_pipe.vae = shard(self.img2img_pipe.vae)
+                self.img2img_pipe.text_encoder = shard(self.img2img_pipe.text_encoder)
+                self.img2img_pipe.text_encoder_2 = shard(self.img2img_pipe.text_encoder_2)
+            except Exception as e:
+                print(f"Multi-GPU sharding unavailable ({e}). Falling back to single-device execution.")
+                self.txt2img_pipe.to(self.device)
+                self.img2img_pipe.to(self.device)
         else:
-            print("Single GPU detected—running without sharding.")
+            if self.device == "cuda":
+                print("Single GPU detected—running without sharding.")
+                self.txt2img_pipe.to(self.device)
+                self.img2img_pipe.to(self.device)
+            else:
+                print("CUDA not available—running on CPU. This will be slow.")
 
-            # Slicing is slower but reduces max VRAM substanitally
+            # Slicing is slower but reduces max VRAM substantially
             self.txt2img_pipe.enable_attention_slicing()
             self.img2img_pipe.enable_attention_slicing()
 
-        # Enable memory-efficient attention for both pipelines
-        self.txt2img_pipe.enable_xformers_memory_efficient_attention()
-        self.img2img_pipe.enable_xformers_memory_efficient_attention()
+        # Enable memory-efficient attention for both pipelines when possible
+        if self.device == "cuda":
+            try:
+                self.txt2img_pipe.enable_xformers_memory_efficient_attention()
+                self.img2img_pipe.enable_xformers_memory_efficient_attention()
+            except Exception as e:
+                print(f"xFormers not available or failed to enable ({e}). Continuing without it.")
 
         # Sets the number of votes needed for a winner to command-line input
         self.vote_threshold = vote_threshold
@@ -139,14 +157,24 @@ class ImageGenerationPipeline:
                 # calculate flat image index (1-based)
                 key_num = set_idx * len(paths) + img_idx + 1
 
-                # Load a bigger font size since the images are large
-                try:
-                    font = ImageFont.truetype("DejaVuSans.ttf", size=32)
-                except IOError:
-                    font = ImageFont.load_default(size=32)  # fallback if font file not found
+                # Try a few common fonts; otherwise fall back to PIL default
+                font = None
+                for font_name in [
+                    "DejaVuSans.ttf",
+                    "Arial.ttf",
+                    "arial.ttf",
+                    "LiberationSans-Regular.ttf",
+                ]:
+                    try:
+                        font = ImageFont.truetype(font_name, size=32)
+                        break
+                    except Exception:
+                        font = None
+                if font is None:
+                    font = ImageFont.load_default()
 
-                # Now use this font in your draw.text call
-                draw.text((5, 5), str(key_num), fill=(255, 255, 255), font=font)
+                # Draw key number in the top-left corner
+                draw.text((8, 8), str(key_num), fill=(255, 255, 255), font=font)
 
                 imgs.append(im)
 
@@ -202,14 +230,17 @@ class ImageGenerationPipeline:
         self,
         selected_key: int,
         prompts_variation: list[str],
-        num_variations: int = 3, 
+        num_variations: int = 3,
         output_dir: str = "outputs",
         strength: float = 0.9, # overwritten by user input
         guidance_scale: float = 0, # overwritten by user input
         num_inference_steps: int = 70 # arbitrary, higher than initial because reduced with strength
     ) -> list[str]:
-        set_i = (selected_key - 1) // num_variations
-        img_i = (selected_key - 1) % num_variations
+        # Derive current number of variations from the first set to avoid mismatch
+        current_variations = len(self.image_sets[0]) if self.image_sets else num_variations
+
+        set_i = (selected_key - 1) // current_variations
+        img_i = (selected_key - 1) % current_variations
         src = self.image_sets[set_i][img_i]
 
         init_img = Image.open(src).convert("RGB")
@@ -225,7 +256,7 @@ class ImageGenerationPipeline:
                 image=init_img,
                 strength=strength,
                 guidance_scale=guidance_scale,
-                num_inference_steps=num_inference_steps
+                num_inference_steps=num_inference_steps,
             )
             img = out.images[0]
             fn = f"img_{j+1}.png"
@@ -236,12 +267,12 @@ class ImageGenerationPipeline:
         self.image_sets[set_i] = new_paths
 
         # Reset votes for the mutated set only
-        for j in range(num_variations):
-            flat_idx = set_i * num_variations + j + 1
+        for j in range(current_variations):
+            flat_idx = set_i * current_variations + j + 1
             self.votes[flat_idx] = 0
 
         # Save new gallery with iterated images
-        self.save_gallery(output_dir, f'gallery_gen_{self.generation}.png')
+        self.save_gallery(output_dir, f"gallery_gen_{self.generation}.png")
         return new_paths
 
 
@@ -275,17 +306,20 @@ if __name__ == "__main__":
             print("Goodbye!")
             sys.exit()
 
-        idx = (sel-1)//3
+        # Derive current variations per set from pipeline state (fallback to 3)
+        current_variations = len(pipeline.image_sets[0]) if pipeline.image_sets else 3
+        idx = (sel - 1) // current_variations
         parent_prompt = base_prompts[idx]
-        # decide whether to use the original prompt or an empty prompt
+
+        # Decide whether to use the original prompt or an empty prompt
         if use_prompt:
-            variations = [f"{parent_prompt}." for _ in range(3)]
+            variations = [f"{parent_prompt}." for _ in range(current_variations)]
         else:
-            variations = ["" for _ in range(3)]
+            variations = ["" for _ in range(current_variations)]
 
         pipeline.iterate(
             sel,
             variations,
             strength=iter_strength,
-            guidance_scale=iter_guidance
+            guidance_scale=iter_guidance,
         )
