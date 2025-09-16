@@ -11,7 +11,7 @@ import glob
 import re
 
 
-def find_latest_gallery(output_dir="."):
+def find_latest_gallery(output_dir="outputs"):
     """Find the most recent gallery image based on generation number."""
     gallery_files = glob.glob(os.path.join(output_dir, "gallery_gen_*.png"))
 
@@ -34,10 +34,12 @@ def find_latest_gallery(output_dir="."):
 
 def display_gallery(output_dir="outputs", refresh_rate=2):
     """Display the latest gallery image and refresh periodically."""
+    os.makedirs(output_dir, exist_ok=True)
     plt.figure(figsize=(8, 8))
     plt.ion()  # Turn on interactive mode
 
     current_gallery = None
+    first_wait_log = True
 
     while True:
         latest_gallery = find_latest_gallery(output_dir)
@@ -61,6 +63,10 @@ def display_gallery(output_dir="outputs", refresh_rate=2):
             plt.pause(0.1)  # Small pause to update the figure
 
             print(f"Displaying gallery from generation {gen_num}")
+            first_wait_log = False
+        elif not latest_gallery and first_wait_log:
+            print("Waiting for the first gallery image to appear in 'outputs'...")
+            first_wait_log = False
 
         # Wait before checking for updates
         time.sleep(refresh_rate)
@@ -68,7 +74,7 @@ def display_gallery(output_dir="outputs", refresh_rate=2):
 
 if __name__ == "__main__":
     # Use current directory for gallery images
-    output_dir = "."
+    output_dir = "outputs"
 
     print(f"Gallery viewer started. Monitoring directory: {output_dir}")
     print("Press Ctrl+C to exit")
